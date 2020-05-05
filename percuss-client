@@ -1,0 +1,37 @@
+#!/usr/bin/env python3
+# Copyright 2020 Luca Filipozzi
+#
+# nfqueue/ipset-based port knocking using JWT (JSON Web Token) as SPA (Single Packet Authorization)
+#
+#
+# install required packages
+#    apt install python3-click python3-jwt
+
+
+import datetime
+import socket
+import time
+import uuid
+
+import click
+import jwt
+
+
+@click.command()
+@click.option('--identity', default='identity')
+@click.option('--secret', default='secret')
+@click.option('--scopes', default='tcp/22 tcp/443')
+@click.option('--host', default='localhost')
+@click.option('--port', default=62201)
+@click.option('--sleep', default=0)
+def main(identity, secret, scopes, host, port, sleep):
+    iat = int(datetime.datetime.now().replace(tzinfo=datetime.timezone.utc).timestamp())
+    decoded_token = { 'exp': iat + 10, 'jti': str(uuid.uuid4()), 'nbf': iat, 'scope': scopes }
+    encoded_token = jwt.encode(decoded_token, secret, algorithm='HS256', headers={'kid': identity})
+    socket.socket(socket.AF_INET, socket.SOCK_DGRAM).sendto(encoded_token, (socket.gethostbyname(host), port))
+    time.sleep(sleep)
+
+
+if __name__ == '__main__':
+    main()
+

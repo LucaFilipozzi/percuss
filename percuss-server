@@ -1,0 +1,118 @@
+#!/usr/bin/env python2
+# Copyright 2020 Luca Filipozzi
+#
+# nfqueue/ipset-based port knocking using JWT (JSON Web Token) as SPA (Single Packet Authorization)
+#
+#
+# JSON Web Token claims used:
+# - nbf: token not valid before this time; typically now, in UTC epoch seconds
+# - exp: token not valid after this time; typically now + 30 seconds, in UTC epoch seconds
+# - jti: unique token identifier; used to prevent replay attacks; typically a uuid4
+# - scope: space-delimited array of scopes; e.g. 'tcp/22 tcp/443'
+#
+# JSON Web Token headers used:
+# - kid: key identifier, used to lookup a client entry in the clients data set
+# 
+#
+# install required packages
+#    apt install python-click python-dpkt python-expiringdict python-jwt python-munch python-pyroute2
+#    apt install -t unstable python-nfqueue
+# create ipset
+#    ipset create <ipset_name> hash:ip,port timeout 30 family inet
+# create iptable rules
+#    iptables  -t mangle -A PREROUTING -p tcp --dport 66201 -j NFQUEUE --queue-num <queue_num>
+#    iptables  -t filter -A INPUT -p tcp --dport  22 -m set --match-set <ipset_name> src,dst # for scope 'tcp/22'
+#    iptables  -t filter -A INPUT -p tcp --dport 443 -m set --match-set <ipset_name> src,dst # for scope 'tcp/443'
+# 
+#
+# enhancments needed:
+#    TODO externalize clients
+#    TODO backport python-nfqueue
+#    TODO switch to python3 (python-nfqueue dependency)
+#    TODO add IPv6 support
+#    TODO add logging (normal & exceptional)
+#    TODO add apparmor profile (grant access nfqueue and ipset; otherwise deny)
+#    TODO add systemd unit
+
+
+import socket
+
+import click
+import dpkt
+import expiringdict
+import jwt
+import munch
+import nfqueue
+import pyroute2
+
+
+class Percuss:
+    def __init__(self, ipset_name, queue_num, clients):
+        self.ipset_name = ipset_name
+        self.queue_num = queue_num
+        self.clients = clients
+        self.ipset = pyroute2.ipset.IPSet()
+        self.cache = expiringdict.ExpiringDict(max_len=100, max_age_seconds=30)
+        self.queue = nfqueue.queue()
+        self.queue.set_callback(self._callback)
+        self.options = {
+            'require_exp': True,
+            'require_nbf': True,
+            'verify_exp': True,
+            'verify_nbf': True,
+        }
+
+    def run(self):
+        self.queue.open()
+        self.queue.bind(socket.AF_INET)
+        self.queue.create_queue(self.queue_num)
+        try:
+            self.queue.try_run()
+        except KeyboardInterrupt, e:
+            self.queue.unbind(socket.AF_INET)
+            self.queue.close()
+
+    def _callback(self, payload):
+        try:
+            # extract encoded_token from payload
+            ip = dpkt.ip.IP(payload.get_data())
+            if ip.p != dpkt.ip.IP_PROTO_UDP:
+                raise Exception('Invalid packet')
+            udp = ip.data
+            encoded_token = udp.data
+
+            # decode encoded_token and verify aud, exp, nbf
+            token_headers = munch.Munch(jwt.get_unverified_header(encoded_token))
+            client = munch.Munch(self.clients[token_headers.kid])
+            decoded_token = munch.Munch(jwt.decode(encoded_token, client.secret, options=self.options))
+
+            # prevent replay attack
+            if decoded_token.jti in self.cache:
+                raise Exception('Invalid token')
+            self.cache[decoded_token.jti] = decoded_token
+
+            # add valid entries to ipset
+            for proto, port in [x.split('/') for x in set(decoded_token.scope.split()).intersection(set(client.scopes))]:
+                entry = (socket.inet_ntoa(ip.src), pyroute2.ipset.PortEntry(int(port), protocol=socket.getprotobyname(proto)))
+                self.ipset.add(self.ipset_name, entry, etype='ip,port', exclusive=False)
+        except Exception, e:
+            pass # ignore exceptions
+        payload.set_verdict(nfqueue.NF_ACCEPT)
+
+
+@click.command()
+@click.option('--ipset-name', default='fwknop')
+@click.option('--queue-num', default=1)
+def main(ipset_name, queue_num):
+    clients = {
+        'identity': {
+            'secret': 'secret',
+            'scopes': [ 'tcp/22', 'tcp/443' ]
+        }
+    }
+    Percuss(ipset_name, queue_num, clients).run()
+
+
+if __name__ == '__main__':
+    main()
+
