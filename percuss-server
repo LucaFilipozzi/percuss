@@ -84,7 +84,7 @@ class Percuss:
             udp = ip.data
             encoded_token = udp.data
 
-            # decode encoded_token and verify aud, exp, nbf
+            # decode encoded_token, verifying signature, exp, and nbf
             token_headers = munch.Munch(jwt.get_unverified_header(encoded_token))
             client = munch.Munch(self.clients[token_headers.kid])
             decoded_token = munch.Munch(jwt.decode(encoded_token, client.secret, options=self.options))
@@ -94,7 +94,7 @@ class Percuss:
                 raise Exception('Invalid token')
             self.cache[decoded_token.jti] = decoded_token
 
-            # add valid entries to ipset
+            # add valid scope entries to ipset
             for proto, port in [x.split('/') for x in set(decoded_token.scope.split()).intersection(set(client.scopes))]:
                 entry = (socket.inet_ntoa(ip.src), pyroute2.ipset.PortEntry(int(port), protocol=socket.getprotobyname(proto)))
                 self.ipset.add(self.ipset_name, entry, etype='ip,port', exclusive=False)
