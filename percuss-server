@@ -20,10 +20,13 @@
 # create ipset
 #    ipset create <ipset_name> hash:ip,port timeout 30 family inet
 # create iptable rules
-#    iptables  -t mangle -A PREROUTING -p tcp --dport 66201 -j NFQUEUE --queue-num <queue_num>
+#    iptables  -t mangle -A PREROUTING -p tcp --dport <knock_port> -j NFQUEUE --queue-num <queue_num>
 #    iptables  -t filter -A INPUT -p tcp --dport  22 -m set --match-set <ipset_name> src,dst # for scope 'tcp/22'
 #    iptables  -t filter -A INPUT -p tcp --dport 443 -m set --match-set <ipset_name> src,dst # for scope 'tcp/443'
-# 
+# where
+# - knock_port is 60001 by default in the percuss-client script
+# - queue_num is 1 by default in this script
+# - ipset_name is percuss by default in this script
 #
 # enhancments needed:
 #    TODO externalize clients
@@ -101,7 +104,7 @@ class Percuss:
 
 
 @click.command()
-@click.option('--ipset-name', default='fwknop')
+@click.option('--ipset-name', default='percuss')
 @click.option('--queue-num', default=1)
 def main(ipset_name, queue_num):
     clients = {

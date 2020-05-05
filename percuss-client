@@ -22,7 +22,7 @@ import jwt
 @click.option('--secret', default='secret')
 @click.option('--scopes', default='tcp/22 tcp/443')
 @click.option('--host', default='localhost')
-@click.option('--port', default=62201)
+@click.option('--port', default=60001)
 @click.option('--sleep', default=0)
 def main(identity, secret, scopes, host, port, sleep):
     iat = int(datetime.datetime.now().replace(tzinfo=datetime.timezone.utc).timestamp())
